@@ -1,46 +1,72 @@
-use ggez::conf::NumSamples;
-use ggez::conf::*;
-use ggez::event;
-use ggez::ContextBuilder;
 use std::env;
 mod cpu;
 use cpu::Processor;
-
-mod window_conf;
-use window_conf::WINDOW_MODE_CONF;
+mod display_driver;
+use sdl2::{self, event::Event, keyboard::Keycode};
 
 fn main() {
-    let window_setup_conf: ggez::conf::WindowSetup = WindowSetup {
-        /// The window title.
-        title: "CHIP-8 EMULATOR".to_string(),
-        /// Number of samples to use for multisample anti-aliasing.
-        samples: NumSamples::One,
-        /// Whether or not to enable vsync.
-        vsync: false,
-        /// A file path to the window's icon.
-        /// It takes a path rooted in the `resources` directory (see the [`filesystem`](../filesystem/index.html)
-        /// module for details), and an empty string results in a blank/default icon.
-        icon: String::new(),
-        /// Whether or not to enable sRGB (gamma corrected color)
-        /// handling on the display.
-        srgb: false,
-    };
-    let (ctx, event_loop) = ContextBuilder::new("my_game", "I made this work")
-        .window_mode(WINDOW_MODE_CONF)
-        .window_setup(window_setup_conf)
-        .build()
-        .expect("aieee, could not create ggez context!");
-    // Create an instance of your event handler.
-    // Usually, you should provide it with the Context object to
-    // use when setting your game up.
-    let mut my_game = Processor::new();
     let mut path = r"C:\Users\petri\Desktop\pythonok\rust\chip\src\".to_string();
     let args: Vec<String> = env::args().collect();
+    let ctx = sdl2::init().unwrap();
+    let mut display_driver = display_driver::Display::new(&ctx);
+    let mut my_game = Processor::new(ctx.event_pump().unwrap());
+
     path.push_str(&args[1]);
     let file = std::fs::read(path);
     for (i, val) in file.unwrap().into_iter().enumerate() {
         my_game.memory[0x200 + i] = val;
     }
-    // Run!
-    event::run(ctx, event_loop, my_game);
+    'outer: loop {
+        for event in my_game.event_pump.poll_iter() {
+            if let Event::Quit { .. } = event {
+                break 'outer;
+            };
+            if let Event::KeyDown {
+                keycode: Some(Keycode::Escape),
+                ..
+            } = event
+            {
+                break 'outer;
+            };
+        }
+        my_game.vram_changed = false;
+
+        //get input like this to avoid borrow errors
+        let keys: Vec<Keycode> = my_game
+            .event_pump
+            .keyboard_state()
+            .pressed_scancodes()
+            .filter_map(Keycode::from_scancode)
+            .collect();
+
+        for key in keys {
+            match key {
+                Keycode::Num1 => my_game.set_key(0x1),
+                Keycode::Num2 => my_game.set_key(0x2),
+                Keycode::Num3 => my_game.set_key(0x3),
+                Keycode::Num4 => my_game.set_key(0xc),
+                Keycode::Q => my_game.set_key(0x4),
+                Keycode::W => my_game.set_key(0x5),
+                Keycode::E => my_game.set_key(0x6),
+                Keycode::R => my_game.set_key(0xd),
+                Keycode::A => my_game.set_key(0x7),
+                Keycode::S => my_game.set_key(0x8),
+                Keycode::D => my_game.set_key(0x9),
+                Keycode::F => my_game.set_key(0xe),
+                Keycode::Y => my_game.set_key(0xa),
+                Keycode::X => my_game.set_key(0x0),
+                Keycode::C => my_game.set_key(0xb),
+                Keycode::V => my_game.set_key(0xf),
+                Keycode::O => my_game.dec_sleep_dur(),
+                Keycode::P => my_game.inc_sleep_dur(),
+                _ => (),
+            }
+        }
+        my_game.tick(); // sound not implemented yet
+        my_game.fetch_op();
+        if my_game.vram_changed {
+            display_driver.draw(my_game.vram);
+        }
+        std::thread::sleep(my_game.sleep_duration);
+    }
 }

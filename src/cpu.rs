@@ -1,15 +1,11 @@
-use ggez::event::EventHandler;
-use ggez::graphics::{self, Color};
-use ggez::input::keyboard::{KeyCode, KeyInput};
-use ggez::{Context, GameResult};
 use rand::random;
+use sdl2::EventPump;
+use std::time;
 use std::time::Duration;
-use std::{thread, time};
 #[path = "font.rs"]
 mod font;
 use font::FONT_SET;
-use ggez::timer::*;
-use std::io::{stdin, stdout, Read, Write};
+
 pub struct Instruction {
     nibble_1: u8,
     x: u8,
@@ -332,10 +328,12 @@ pub struct Processor {
     pub vram_changed: bool,
     pub v: [u8; 16],
     pub i: usize,
+    pub event_pump: EventPump,
+    pub instructions_per_second: f64,
 }
 
 impl Processor {
-    pub fn new() -> Self {
+    pub fn new(pump: EventPump) -> Self {
         Processor {
             stack: {
                 let mut buffer: Vec<usize> = Vec::new();
@@ -356,12 +354,14 @@ impl Processor {
                 buffer
             },
             vram: [[false; 64]; 32],
-            sleep_duration: Duration::from_secs_f64(1.0 / 1200.0),
+            sleep_duration: Duration::from_secs_f64(1.0 / 700.0),
             keypad: [false; 16],
             pc: 0x200,
             vram_changed: false,
             v: [0; 16],
             i: 0,
+            event_pump: pump,
+            instructions_per_second: 700.0,
         }
     }
 
@@ -371,28 +371,6 @@ impl Processor {
         }
         if self.sound_timer > 0 {
             self.sound_timer -= 1;
-        }
-    }
-    pub fn get_keycode(&mut self, input: KeyInput) {
-        self.keypad = [false; 16];
-        match input.keycode {
-            Some(KeyCode::Key1) => self.keypad[0x01] = true,
-            Some(KeyCode::Key2) => self.keypad[0x02] = true,
-            Some(KeyCode::Key3) => self.keypad[0x03] = true,
-            Some(KeyCode::Q) => self.keypad[0x04] = true,
-            Some(KeyCode::W) => self.keypad[0x05] = true,
-            Some(KeyCode::E) => self.keypad[0x06] = true,
-            Some(KeyCode::A) => self.keypad[0x07] = true,
-            Some(KeyCode::S) => self.keypad[0x08] = true,
-            Some(KeyCode::D) => self.keypad[0x09] = true,
-            Some(KeyCode::Y) => self.keypad[0x0A] = true,
-            Some(KeyCode::X) => self.keypad[0x00] = true,
-            Some(KeyCode::C) => self.keypad[0x0B] = true,
-            Some(KeyCode::Key4) => self.keypad[0x0C] = true,
-            Some(KeyCode::R) => self.keypad[0x0D] = true,
-            Some(KeyCode::F) => self.keypad[0x0E] = true,
-            Some(KeyCode::V) => self.keypad[0x0F] = true,
-            _ => (),
         }
     }
 
@@ -407,55 +385,23 @@ impl Processor {
         self.pc += 2;
         Processor::decode_op(self, op_1, op_2);
     }
-}
-
-impl EventHandler for Processor {
-    fn update(&mut self, _ctx: &mut Context) -> GameResult<()> {
-        self.vram_changed = false;
-        self.tick();
-        print!("\r{:.2} fps", ggez::timer::fps(_ctx));
-        self.fetch_op();
-        if self.vram_changed {
-            self.draw(_ctx);
-        }
-        //thread::sleep(self.sleep_duration);
-        //let mut stdout = stdout();
-        //stdout.write(b"Press Enter to continue...").unwrap();
-        //stdout.flush().unwrap();
-        //stdin().read(&mut [0]).unwrap();
-        yield_now();
-        Ok(())
-    }
-    fn draw(&mut self, ctx: &mut Context) -> GameResult<()> {
-        let mut canvas = graphics::Canvas::from_frame(ctx, Color::BLACK);
-        // Draw code here...
-        let mut rect = graphics::Rect::new(10.0, 10.0, 9.0, 9.0);
-        for (i, vec) in (&self.vram).into_iter().enumerate() {
-            for (j, val) in vec.into_iter().enumerate() {
-                rect.x = (j * 10) as f32;
-                rect.y = (i * 10) as f32;
-                canvas.draw(
-                    &graphics::Quad,
-                    graphics::DrawParam::new()
-                        .dest(rect.point())
-                        .scale(rect.size())
-                        .color(match val {
-                            false => Color::BLACK,
-                            true => Color::WHITE,
-                        }),
-                );
-            }
-        }
-        canvas.finish(ctx)
+    pub fn set_key(&mut self, x: usize) {
+        self.keypad = [false; 16];
+        self.keypad[x] = true;
     }
 
-    fn key_down_event(
-        &mut self,
-        ctx: &mut Context,
-        input: KeyInput,
-        _repeated: bool,
-    ) -> GameResult {
-        Processor::get_keycode(self, input);
-        Ok(())
+    pub fn dec_sleep_dur(&mut self) {
+        if self.instructions_per_second > 50.0 {
+            self.instructions_per_second -= 1.0;
+            self.sleep_duration = Duration::from_secs_f64(1.0 / self.instructions_per_second);
+        }
+        println!("Instruction per second: {}", self.instructions_per_second);
+    }
+    pub fn inc_sleep_dur(&mut self) {
+        if self.instructions_per_second < 1300.0 {
+            self.instructions_per_second += 1.0;
+            self.sleep_duration = Duration::from_secs_f64(1.0 / self.instructions_per_second);
+        }
+        println!("Instruction per second: {}", self.instructions_per_second);
     }
 }
