@@ -1,4 +1,5 @@
 use rand::random;
+use sdl2::audio::AudioDevice;
 use sdl2::EventPump;
 use std::time;
 use std::time::Duration;
@@ -6,6 +7,7 @@ use std::time::Duration;
 mod font;
 use font::FONT_SET;
 
+use crate::audio::SquareWave;
 pub struct Instruction {
     nibble_1: u8,
     x: u8,
@@ -67,175 +69,33 @@ impl Instruction {
             (0x0F, _, 0x03, 0x03) => self.op_fx33(processor),
             (0x0F, _, 0x05, 0x05) => self.op_fx55(processor),
             (0x0F, _, 0x06, 0x05) => self.op_fx65(processor),
-            _ => println!("Doesn't exist, or not implemented!"),
+            _ => println!("Instruction doesn't exist, or not implemented!"),
         }
     }
+
     //load in memory
-    pub fn op_fx65(&self, processor: &mut Processor) {
-        //if self.x == 0 {
-        //    processor.v[self.x as usize] = processor.memory[processor.i];
-        //    processor.i += 1;
-        //    return;
-        //}
-        for val in 0..(self.x + 1) as usize {
-            processor.v[val] = processor.memory[(processor.i + val) as usize];
-        }
+    //clear screen 00E0
+    pub fn op_00e0(&self, processor: &mut Processor) {
+        processor.vram = [[false; 64]; 32];
+        processor.vram_changed = true;
     }
 
-    //store in memory
-    pub fn op_fx55(&self, processor: &mut Processor) {
-        //if self.x == 0 {
-        //    processor.memory[processor.i as usize] = processor.v[self.x as usize] as u8;
-        //    processor.i += 1;
-        //    return;
-        //}
-        for val in 0..(self.x + 1) as usize {
-            processor.memory[processor.i + val] = processor.v[val] as u8;
-        }
-    }
-    //binary to decimal
-    pub fn op_fx33(&self, processor: &mut Processor) {
-        let num = processor.v[self.x as usize];
-        let (n1, n2, n3) = (num / 100, (num % 100) / 10, num % 10);
-        processor.memory[processor.i as usize] = n1 as u8;
-        processor.memory[(processor.i + 1) as usize] = n2 as u8;
-        processor.memory[(processor.i + 2) as usize] = n3 as u8;
-    }
-
-    //set i to font adress
-    pub fn op_fx29(&self, processor: &mut Processor) {
-        processor.i = ((processor.v[self.x as usize]) * 5 + 0x050) as usize;
-    }
-    // wait for input
-    pub fn op_fx0a(&self, processor: &mut Processor) {
-        for (i, val) in processor.keypad.into_iter().enumerate() {
-            if val == true {
-                processor.v[self.x as usize] = i as u8;
-                return;
-            }
-        }
-        processor.pc -= 2;
-    }
-
-    //add to index set v[0xf] to 1 if overflow
-    pub fn op_fx1e(&self, processor: &mut Processor) {
-        let res = processor.i + processor.v[self.x as usize] as usize;
-        processor.v[0x0f] = if processor.i > 0x0F00 { 1 } else { 0 };
-        processor.i = res;
-    }
-    // set delay timer to v[x]
-    pub fn op_fx18(&self, processor: &mut Processor) {
-        processor.sound_timer = processor.v[self.x as usize];
-    }
-    // set delay timer to v[x]
-    pub fn op_fx15(&self, processor: &mut Processor) {
-        processor.delay_timer = processor.v[self.x as usize];
-    }
-    // set v[x] to delay timer
-    pub fn op_fx07(&self, processor: &mut Processor) {
-        processor.v[self.x as usize] = processor.delay_timer;
-    }
-    // skip if v[x] is not pressed
-    pub fn op_exa1(&self, processor: &mut Processor) {
-        if processor.keypad[processor.v[self.x as usize] as usize] != true {
-            processor.pc += 2;
-        }
-    }
-    // skip if v[x] value is pressed
-    pub fn op_ex9e(&self, processor: &mut Processor) {
-        if processor.keypad[processor.v[self.x as usize] as usize] == true {
-            processor.pc += 2;
-        }
-    }
-    //rng
-    pub fn op_cxnn(&self, processor: &mut Processor) {
-        processor.v[self.x as usize] = random::<u8>() & self.nn as u8;
-    }
-
-    //weird jump
-    pub fn op_bnnn(&self, processor: &mut Processor) {
-        processor.pc = (self.nnn + processor.v[0] as u16) as usize;
-    }
-
-    //shr
-    pub fn op_8xy6(&self, processor: &mut Processor) {
-        processor.v[0x0f] = 0x01 & processor.v[self.x as usize];
-        processor.v[self.x as usize] >>= 1;
-    }
-    //shl
-    pub fn op_8xye(&self, processor: &mut Processor) {
-        processor.v[0x0f] = if 0x80 & processor.v[self.x as usize] > 0 {
-            1
-        } else {
-            0
+    // return from subroutine
+    pub fn op_00ee(&self, processor: &mut Processor) {
+        processor.pc = match processor.stack.pop() {
+            Some(x) => x,
+            None => 0x200,
         };
-        processor.v[self.x as usize] <<= 1;
-    }
-    // subtract
-    pub fn op_8xy7(&self, processor: &mut Processor) {
-        let res = processor.v[(self.y) as usize].wrapping_sub(processor.v[self.x as usize]) as u8;
-        if processor.v[self.y as usize] >= processor.v[self.x as usize] {
-            processor.v[0xF] = 1;
-        } else {
-            processor.v[0xF] = 0;
-        }
-        processor.v[self.x as usize] = res;
     }
 
-    pub fn op_8xy5(&self, processor: &mut Processor) {
-        let res = processor.v[(self.x) as usize].wrapping_sub(processor.v[self.y as usize]) as u8;
-        if processor.v[self.x as usize] >= processor.v[self.y as usize] {
-            processor.v[0xF] = 1;
-        } else {
-            processor.v[0xF] = 0;
-        }
-        processor.v[self.x as usize] = res;
+    //jump
+    pub fn op_1nnn(&self, processor: &mut Processor) {
+        processor.pc = self.nnn as usize;
     }
-
-    // add
-    pub fn op_8xy4(&self, processor: &mut Processor) {
-        let res = processor.v[(self.x) as usize] as u16 + processor.v[(self.y) as usize] as u16;
-        if res > 255 {
-            processor.v[0xF] = 1;
-            processor.v[self.x as usize] = (res % 256) as u8;
-        } else {
-            processor.v[0xF] = 0;
-            processor.v[self.x as usize] = (res % 256) as u8;
-        }
-    }
-    // binary xor
-    pub fn op_8xy3(&self, processor: &mut Processor) {
-        processor.v[(self.x) as usize] =
-            processor.v[(self.y) as usize] ^ processor.v[self.x as usize];
-    }
-    // binary and
-    pub fn op_8xy2(&self, processor: &mut Processor) {
-        processor.v[(self.x) as usize] =
-            processor.v[(self.y) as usize] & processor.v[self.x as usize];
-    }
-
-    // binary or
-    pub fn op_8xy1(&self, processor: &mut Processor) {
-        processor.v[(self.x) as usize] =
-            processor.v[(self.y) as usize] | processor.v[self.x as usize];
-    }
-
-    // set vx to vy
-    pub fn op_8xy0(&self, processor: &mut Processor) {
-        processor.v[(self.x) as usize] = processor.v[(self.y) as usize];
-    }
-
-    //skips
-    pub fn op_9xy0(&self, processor: &mut Processor) {
-        if processor.v[self.x as usize] != processor.v[self.y as usize] {
-            processor.pc += 2;
-        }
-    }
-
-    pub fn op_5xy0(&self, processor: &mut Processor) {
-        if processor.v[self.x as usize] == processor.v[self.y as usize] {
-            processor.pc += 2;
-        }
+    //start subroutine
+    pub fn op_2nnn(&self, processor: &mut Processor) {
+        processor.stack.push(processor.pc);
+        processor.pc = self.nnn as usize;
     }
 
     pub fn op_3xnn(&self, processor: &mut Processor) {
@@ -250,30 +110,12 @@ impl Instruction {
         }
     }
 
-    // return from subroutine
-    pub fn op_00ee(&self, processor: &mut Processor) {
-        processor.pc = match processor.stack.pop() {
-            Some(x) => x,
-            None => 0x200,
-        };
+    pub fn op_5xy0(&self, processor: &mut Processor) {
+        if processor.v[self.x as usize] == processor.v[self.y as usize] {
+            processor.pc += 2;
+        }
     }
 
-    //start subroutine
-    pub fn op_2nnn(&self, processor: &mut Processor) {
-        processor.stack.push(processor.pc);
-        processor.pc = self.nnn as usize;
-    }
-
-    //clear screen 00E0
-    pub fn op_00e0(&self, processor: &mut Processor) {
-        processor.vram = [[false; 64]; 32];
-        processor.vram_changed = true;
-    }
-
-    //jump
-    pub fn op_1nnn(&self, processor: &mut Processor) {
-        processor.pc = self.nnn as usize;
-    }
     //set v[x] to nn
     pub fn op_6xnn(&self, processor: &mut Processor) {
         processor.v[(self.x) as usize] = self.nn;
@@ -283,11 +125,93 @@ impl Instruction {
     pub fn op_7xnn(&self, processor: &mut Processor) {
         processor.v[(self.x) as usize] += self.nn;
     }
+
+    // set vx to vy
+    pub fn op_8xy0(&self, processor: &mut Processor) {
+        processor.v[(self.x) as usize] = processor.v[(self.y) as usize];
+    }
+
+    // binary or
+    pub fn op_8xy1(&self, processor: &mut Processor) {
+        processor.v[(self.x) as usize] =
+            processor.v[(self.y) as usize] | processor.v[self.x as usize];
+    }
+
+    // binary and
+    pub fn op_8xy2(&self, processor: &mut Processor) {
+        processor.v[(self.x) as usize] =
+            processor.v[(self.y) as usize] & processor.v[self.x as usize];
+    }
+
+    // binary xor
+    pub fn op_8xy3(&self, processor: &mut Processor) {
+        processor.v[(self.x) as usize] =
+            processor.v[(self.y) as usize] ^ processor.v[self.x as usize];
+    }
+
+    // add
+    pub fn op_8xy4(&self, processor: &mut Processor) {
+        let res = processor.v[(self.x) as usize] as u16 + processor.v[(self.y) as usize] as u16;
+        if res > 255 {
+            processor.v[0xF] = 1;
+        } else {
+            processor.v[0xF] = 0;
+        }
+        processor.v[self.x as usize] = (res % 256) as u8;
+    }
+    pub fn op_8xy5(&self, processor: &mut Processor) {
+        let res = processor.v[(self.x) as usize].wrapping_sub(processor.v[self.y as usize]) as u8;
+        if processor.v[self.x as usize] >= processor.v[self.y as usize] {
+            processor.v[0xF] = 1;
+        } else {
+            processor.v[0xF] = 0;
+        }
+        processor.v[self.x as usize] = res;
+    }
+
+    //shr
+    pub fn op_8xy6(&self, processor: &mut Processor) {
+        processor.v[0x0f] = 0x01 & processor.v[self.x as usize];
+        processor.v[self.x as usize] >>= 1;
+    }
+    // subtract
+    pub fn op_8xy7(&self, processor: &mut Processor) {
+        let res = processor.v[(self.y) as usize].wrapping_sub(processor.v[self.x as usize]) as u8;
+        if processor.v[self.y as usize] >= processor.v[self.x as usize] {
+            processor.v[0xF] = 1;
+        } else {
+            processor.v[0xF] = 0;
+        }
+        processor.v[self.x as usize] = res;
+    }
+    //shl
+    pub fn op_8xye(&self, processor: &mut Processor) {
+        processor.v[0x0f] = if 0x80 & processor.v[self.x as usize] > 0 {
+            1
+        } else {
+            0
+        };
+        processor.v[self.x as usize] <<= 1;
+    }
+
+    //skips
+    pub fn op_9xy0(&self, processor: &mut Processor) {
+        if processor.v[self.x as usize] != processor.v[self.y as usize] {
+            processor.pc += 2;
+        }
+    }
     // set i reg to nnn
     pub fn op_annn(&self, processor: &mut Processor) {
         processor.i = self.nnn as usize;
     }
-
+    //weird jump
+    pub fn op_bnnn(&self, processor: &mut Processor) {
+        processor.pc = (self.nnn + processor.v[0] as u16) as usize;
+    }
+    //rng
+    pub fn op_cxnn(&self, processor: &mut Processor) {
+        processor.v[self.x as usize] = random::<u8>() & self.nn as u8;
+    }
     /// display / draw
     pub fn op_dxyn(&mut self, processor: &mut Processor) {
         processor.v[0x0f] = 0;
@@ -314,8 +238,83 @@ impl Instruction {
             }
         }
     }
-}
 
+    // skip if v[x] value is pressed
+    pub fn op_ex9e(&self, processor: &mut Processor) {
+        if processor.keypad[processor.v[self.x as usize] as usize] == true {
+            processor.pc += 2;
+        }
+    }
+    // skip if v[x] is not pressed
+    pub fn op_exa1(&self, processor: &mut Processor) {
+        if processor.keypad[processor.v[self.x as usize] as usize] != true {
+            processor.pc += 2;
+        }
+    }
+    // set v[x] to delay timer
+    pub fn op_fx07(&self, processor: &mut Processor) {
+        processor.v[self.x as usize] = processor.delay_timer;
+    }
+
+    // wait for input
+    pub fn op_fx0a(&self, processor: &mut Processor) {
+        for (i, val) in processor.keypad.into_iter().enumerate() {
+            if val == true {
+                processor.v[self.x as usize] = i as u8;
+                return;
+            }
+        }
+        processor.pc -= 2;
+    }
+    // set delay timer to v[x]
+    pub fn op_fx15(&self, processor: &mut Processor) {
+        processor.delay_timer = processor.v[self.x as usize];
+    }
+
+    // set delay timer to v[x]
+    pub fn op_fx18(&self, processor: &mut Processor) {
+        processor.sound_timer = processor.v[self.x as usize];
+    }
+    //add to index set v[0xf] to 1 if overflow
+    pub fn op_fx1e(&self, processor: &mut Processor) {
+        let res = processor.i + processor.v[self.x as usize] as usize;
+        processor.v[0x0f] = if processor.i > 0x0F00 { 1 } else { 0 };
+        processor.i = res;
+    }
+    //set i to font adress
+    pub fn op_fx29(&self, processor: &mut Processor) {
+        processor.i = ((processor.v[self.x as usize]) * 5 + 0x050) as usize;
+    }
+    //binary to decimal
+    pub fn op_fx33(&self, processor: &mut Processor) {
+        let num = processor.v[self.x as usize];
+        let (n1, n2, n3) = (num / 100, (num % 100) / 10, num % 10);
+        processor.memory[processor.i as usize] = n1 as u8;
+        processor.memory[(processor.i + 1) as usize] = n2 as u8;
+        processor.memory[(processor.i + 2) as usize] = n3 as u8;
+    }
+    //store in memory
+    pub fn op_fx55(&self, processor: &mut Processor) {
+        //if self.x == 0 {
+        //    processor.memory[processor.i as usize] = processor.v[self.x as usize] as u8;
+        //    processor.i += 1;
+        //    return;
+        //}
+        for val in 0..(self.x + 1) as usize {
+            processor.memory[processor.i + val] = processor.v[val] as u8;
+        }
+    }
+    pub fn op_fx65(&self, processor: &mut Processor) {
+        //if self.x == 0 {
+        //    processor.v[self.x as usize] = processor.memory[processor.i];
+        //    processor.i += 1;
+        //    return;
+        //}
+        for val in 0..(self.x + 1) as usize {
+            processor.v[val] = processor.memory[(processor.i + val) as usize];
+        }
+    }
+}
 pub struct Processor {
     pub stack: Vec<usize>,
     pub delay_timer: u8,
@@ -330,10 +329,11 @@ pub struct Processor {
     pub i: usize,
     pub event_pump: EventPump,
     pub instructions_per_second: f64,
+    pub audio_device: AudioDevice<SquareWave>,
 }
 
 impl Processor {
-    pub fn new(pump: EventPump) -> Self {
+    pub fn new(pump: EventPump, device: AudioDevice<SquareWave>) -> Self {
         Processor {
             stack: {
                 let mut buffer: Vec<usize> = Vec::new();
@@ -362,6 +362,7 @@ impl Processor {
             i: 0,
             event_pump: pump,
             instructions_per_second: 700.0,
+            audio_device: device,
         }
     }
 
@@ -371,6 +372,10 @@ impl Processor {
         }
         if self.sound_timer > 0 {
             self.sound_timer -= 1;
+            self.audio_device.resume();
+        } else {
+            self.audio_device.pause();
+            //stop sound
         }
     }
 
@@ -383,10 +388,9 @@ impl Processor {
         let op_1 = self.memory[self.pc];
         let op_2 = self.memory[self.pc + 1];
         self.pc += 2;
-        Processor::decode_op(self, op_1, op_2);
+        self.decode_op(op_1, op_2);
     }
     pub fn set_key(&mut self, x: usize) {
-        self.keypad = [false; 16];
         self.keypad[x] = true;
     }
 
@@ -398,7 +402,7 @@ impl Processor {
         println!("Instruction per second: {}", self.instructions_per_second);
     }
     pub fn inc_sleep_dur(&mut self) {
-        if self.instructions_per_second < 1300.0 {
+        if self.instructions_per_second < 3000.0 {
             self.instructions_per_second += 1.0;
             self.sleep_duration = Duration::from_secs_f64(1.0 / self.instructions_per_second);
         }
