@@ -214,6 +214,7 @@ impl Instruction {
     }
     /// display / draw
     pub fn op_dxyn(&mut self, processor: &mut Processor) {
+        //TODO XOR U64-ES XOR SYSTEM NEM ILYEN BITMAPOS
         processor.v[0x0f] = 0;
         processor.vram_changed = true;
         for i in 0..self.n {
